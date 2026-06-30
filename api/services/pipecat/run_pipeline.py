@@ -105,6 +105,52 @@ DEFAULT_TURN_START_MIN_WORDS = 3
 DEFAULT_PROVISIONAL_VAD_PAUSE_SECS = 1.5
 DEFAULT_SMART_TURN_STOP_SECS = 2.0
 
+# ---------------------------------------------------------------------------
+# Hinglish Prompt Injection
+#
+# When using the local Speaches/Ollama provider (e.g. qwen2.5:3b), this
+# prefix is automatically prepended to the agent's system prompt so the
+# model speaks short, natural Hinglish sentences without being explicitly
+# instructed by the end user. Cloud providers are unaffected.
+# ---------------------------------------------------------------------------
+
+HINGLISH_SYSTEM_PROMPT_PREFIX = """\
+[COMMUNICATION STYLE — HINGLISH VOICE AI]
+You are a friendly Indian voice assistant. Follow these rules strictly:
+1. ALWAYS respond in short, natural Hinglish (mix of casual Hindi words + English).
+   Good example: "Haan bilkul, main aapki help kar sakta hoon. Kya chahiye aapko?"
+   Bad example: "Certainly, I would be delighted to assist you today."
+2. Keep each response to 1-3 sentences MAX. Voice callers hate long answers.
+3. Use everyday Hindi words naturally — "haan", "theek hai", "bilkul", "koi baat nahi",
+   "shukriya", "achha", "dekho" — don't force translate technical terms.
+4. NEVER use markdown, bullet points, or numbered lists. Speak like a person.
+5. If you don't understand, say: "Sorry, thoda aur clearly bolein please?"
+[END COMMUNICATION STYLE]\n\n"""
+
+
+def inject_hinglish_prompt(user_config, base_system_prompt: str) -> str:
+    """Prepend Hinglish communication style prefix for local LLM providers.
+
+    This is a no-op for cloud providers (OpenAI, Groq, etc.) so existing
+    agent configurations continue working unchanged.
+
+    Args:
+        user_config: User configuration object containing LLM settings.
+        base_system_prompt: The agent's configured system prompt.
+
+    Returns:
+        Modified system prompt with Hinglish prefix (local) or unchanged (cloud).
+    """
+    try:
+        provider = getattr(getattr(user_config, "llm", None), "provider", None)
+        if provider == ServiceProviders.SPEACHES.value:
+            logger.debug("[hinglish] Injecting Hinglish prefix for local Ollama LLM")
+            return HINGLISH_SYSTEM_PROMPT_PREFIX + (base_system_prompt or "")
+    except Exception:
+        pass  # Never break the pipeline over a prompt injection failure
+    return base_system_prompt or ""
+
+
 
 def _resolve_user_turn_stop_timeout(
     run_configs: dict, *, uses_external_turns: bool
@@ -760,6 +806,10 @@ async def _run_pipeline_impl(
         embeddings_api_version=embeddings_api_version,
         has_recordings=has_recordings,
         context_compaction_enabled=context_compaction_enabled,
+        # Inject Hinglish prompt prefix automatically for local Ollama LLM.
+        # Cloud providers (OpenAI, Groq, etc.) are unaffected — inject_hinglish_prompt
+        # is a no-op when the provider is not ServiceProviders.SPEACHES.
+        system_prompt_transformer=lambda prompt: inject_hinglish_prompt(user_config, prompt),
     )
 
     # Create pipeline components

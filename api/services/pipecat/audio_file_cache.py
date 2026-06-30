@@ -218,3 +218,112 @@ async def get_cached_ambient_noise_path(
         return None
     finally:
         _safe_unlink(tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# TTS Phrase Cache (SSD-backed, MD5-keyed)
+#
+# Caches synthesised TTS audio on the 200 GB SSD volume so that repeated
+# phrases (greetings, FAQs, confirmations) are served instantly without
+# incurring CPU synthesis cost on the Kokoro-FastAPI service.
+#
+# Cache directory: /app/recordings/tts_cache/
+# Key format:      <md5(text)>_<sample_rate>.wav
+# ---------------------------------------------------------------------------
+
+import hashlib as _hashlib
+
+# Point at the SSD-mounted recordings volume (mapped via Docker volume in compose)
+_TTS_PHRASE_CACHE_DIR = os.environ.get(
+    "TTS_PHRASE_CACHE_DIR",
+    os.path.join(os.path.dirname(APP_ROOT_DIR), "recordings", "tts_cache"),
+)
+os.makedirs(_TTS_PHRASE_CACHE_DIR, exist_ok=True)
+
+
+def _tts_phrase_cache_path(text: str, sample_rate: int, voice: str = "") -> str:
+    """Return the deterministic SSD cache path for a TTS phrase.
+
+    Args:
+        text: The exact TTS text to synthesise.
+        sample_rate: Target audio sample rate (e.g. 24000).
+        voice: Voice ID so different voices get separate cache files.
+
+    Returns:
+        Absolute path to the cache file (may or may not exist yet).
+    """
+    key = f"{text}|{voice}|{sample_rate}"
+    md5 = _hashlib.md5(key.encode("utf-8")).hexdigest()
+    safe_voice = "".join(c if c.isalnum() else "_" for c in voice)[:16]
+    return os.path.join(_TTS_PHRASE_CACHE_DIR, f"tts_{safe_voice}_{md5}_{sample_rate}.wav")
+
+
+def get_cached_tts_phrase(text: str, sample_rate: int, voice: str = "") -> Optional[bytes]:
+    """Return cached WAV bytes for *text* if a cache hit exists, else None.
+
+    Call this before invoking the Kokoro TTS service. A cache hit means
+    0 ms synthesis latency — the audio bytes are read directly from SSD.
+
+    Args:
+        text: The TTS response text to look up.
+        sample_rate: Audio sample rate for playback.
+        voice: Voice ID used during synthesis.
+
+    Returns:
+        WAV bytes on cache hit, None on cache miss.
+    """
+    cache_path = _tts_phrase_cache_path(text, sample_rate, voice)
+    if os.path.exists(cache_path):
+        try:
+            data = read_cached_file(cache_path)
+            logger.debug(
+                f"[tts_cache] HIT  | voice={voice} | rate={sample_rate} | "
+                f"{len(text)} chars → {len(data)} bytes | {cache_path}"
+            )
+            return data
+        except OSError:
+            logger.warning(f"[tts_cache] Failed to read cache file: {cache_path}")
+    return None
+
+
+def save_tts_phrase_cache(
+    text: str, sample_rate: int, audio_bytes: bytes, voice: str = ""
+) -> None:
+    """Atomically write synthesised TTS audio to the SSD phrase cache.
+
+    Called immediately after a successful Kokoro synthesis so future
+    requests for the same text are served from disk.
+
+    Args:
+        text: The TTS text that was synthesised.
+        sample_rate: Audio sample rate of the output audio.
+        audio_bytes: Raw WAV bytes to cache.
+        voice: Voice ID used during synthesis.
+    """
+    cache_path = _tts_phrase_cache_path(text, sample_rate, voice)
+    try:
+        write_cache_file(cache_path, audio_bytes)
+        logger.info(
+            f"[tts_cache] MISS → saved | voice={voice} | rate={sample_rate} | "
+            f"{len(text)} chars → {len(audio_bytes)} bytes | {cache_path}"
+        )
+    except OSError:
+        logger.warning(f"[tts_cache] Failed to write cache file: {cache_path}")
+
+
+def get_tts_cache_stats() -> dict:
+    """Return basic stats about the TTS phrase cache for health/debug endpoints."""
+    try:
+        files = [
+            f for f in os.listdir(_TTS_PHRASE_CACHE_DIR) if f.startswith("tts_")
+        ]
+        total_bytes = sum(
+            os.path.getsize(os.path.join(_TTS_PHRASE_CACHE_DIR, f)) for f in files
+        )
+        return {
+            "cache_dir": _TTS_PHRASE_CACHE_DIR,
+            "cached_phrases": len(files),
+            "total_size_mb": round(total_bytes / (1024 * 1024), 2),
+        }
+    except OSError:
+        return {"cache_dir": _TTS_PHRASE_CACHE_DIR, "cached_phrases": 0, "total_size_mb": 0}

@@ -78,6 +78,7 @@ class PipecatEngine:
         embeddings_api_version: Optional[str] = None,
         has_recordings: bool = False,
         context_compaction_enabled: bool = False,
+        system_prompt_transformer: Optional[Callable[[str], str]] = None,
     ):
         self.task = task
         self.llm = llm
@@ -118,6 +119,10 @@ class PipecatEngine:
 
         # Custom tool manager (initialized in initialize())
         self._custom_tool_manager: Optional[CustomToolManager] = None
+
+        # Optional callback to transform the composed system prompt before
+        # sending it to the LLM (e.g. Hinglish prefix injection for local models).
+        self._system_prompt_transformer: Optional[Callable[[str], str]] = system_prompt_transformer
 
         # Cached organization ID (resolved lazily from workflow run)
         self._organization_id: Optional[int] = None
@@ -208,6 +213,13 @@ class PipecatEngine:
         if functions:
             tools_schema = ToolsSchema(standard_tools=functions)
             self.context.set_tools(tools_schema)
+
+        # Apply optional system prompt transformer (e.g. Hinglish prefix for local LLMs)
+        if self._system_prompt_transformer is not None:
+            try:
+                system_prompt = self._system_prompt_transformer(system_prompt)
+            except Exception:
+                logger.warning("[engine] system_prompt_transformer raised an exception; using raw prompt")
 
         # For Gemini Live, set context on the LLM before _update_settings so that
         # _connect (triggered by reconnect) can read tools from it.

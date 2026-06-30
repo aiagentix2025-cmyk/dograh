@@ -474,7 +474,19 @@ class AWSBedrockLLMConfiguration(BaseLLMConfiguration):
     )
 
 
-SPEACHES_LLM_MODELS = ["llama3", "mistral", "phi3", "qwen2", "gemma2", "deepseek-r1"]
+# Ordered with Hinglish-capable Qwen2.5 models first for this deployment
+SPEACHES_LLM_MODELS = [
+    "qwen2.5:3b",
+    "qwen2.5:1.5b",
+    "qwen2.5:7b",
+    "llama3.2:3b",
+    "llama3",
+    "mistral",
+    "phi3",
+    "qwen2",
+    "gemma2",
+    "deepseek-r1",
+]
 
 
 @register_llm
@@ -482,20 +494,22 @@ class SpeachesLLMConfiguration(BaseLLMConfiguration):
     model_config = SPEACHES_PROVIDER_MODEL_CONFIG
     provider: Literal[ServiceProviders.SPEACHES] = ServiceProviders.SPEACHES
     model: str = Field(
-        default="llama3",
-        description="Model name as exposed by your OpenAI-compatible server.",
+        # Default to qwen2.5:3b — best quality/speed balance for Hinglish voice AI
+        default="qwen2.5:3b",
+        description="Model name as exposed by your OpenAI-compatible Ollama server.",
         json_schema_extra={
             "examples": SPEACHES_LLM_MODELS,
             "allow_custom_input": True,
         },
     )
     base_url: str = Field(
-        default="http://localhost:11434/v1",
-        description="OpenAI-compatible endpoint (Ollama, vLLM, etc.).",
+        # Points to local-brain Docker service (Ollama container)
+        default="http://local-brain:11434/v1",
+        description="OpenAI-compatible endpoint (Ollama). Use http://local-brain:11434/v1 for self-hosted stack.",
     )
     api_key: str | list[str] | None = Field(
         default=None,
-        description="Usually not required for self-hosted endpoints. Leave blank unless your server enforces one.",
+        description="Usually not required for self-hosted Ollama endpoints. Leave blank.",
     )
 
 
@@ -1120,7 +1134,16 @@ class RimeTTSConfiguration(BaseTTSConfiguration):
     )
 
 
-SPEACHES_TTS_MODELS = ["hexgrad/Kokoro-82M"]
+SPEACHES_TTS_MODELS = ["kokoro", "hexgrad/Kokoro-82M"]
+
+# Curated Kokoro voice IDs — hf_alpha: warm female, hm_omega: clear male
+SPEACHES_TTS_VOICES = [
+    "hf_alpha",   # Warm female — recommended for Indian/Hinglish tone
+    "hm_omega",   # Clear male
+    "af_heart",   # Affectionate female
+    "af_bella",   # Expressive female
+    "am_adam",    # Standard male
+]
 
 
 @register_tts
@@ -1129,23 +1152,25 @@ class SpeachesTTSConfiguration(BaseTTSConfiguration):
     provider: Literal[ServiceProviders.SPEACHES] = ServiceProviders.SPEACHES
     model: str = Field(
         default="kokoro",
-        description="Model name as served by your TTS endpoint (e.g. Kokoro-FastAPI).",
+        description="Model name as served by your Kokoro-FastAPI TTS endpoint.",
         json_schema_extra={
             "examples": SPEACHES_TTS_MODELS,
             "allow_custom_input": True,
         },
     )
     voice: str = Field(
-        default="af_heart",
-        json_schema_extra={"allow_custom_input": True},
-        description="Voice ID for the TTS engine.",
+        # hf_alpha: warm female Indian-accented voice — best for Hinglish support
+        default="hf_alpha",
+        json_schema_extra={"examples": SPEACHES_TTS_VOICES, "allow_custom_input": True},
+        description="Voice ID for Kokoro TTS (hf_alpha=warm female, hm_omega=clear male).",
     )
     base_url: str = Field(
-        default="http://localhost:8000/v1",
-        description="OpenAI-compatible TTS endpoint (Kokoro-FastAPI, etc.).",
+        # Points to local-tts Docker service (Kokoro-FastAPI container)
+        default="http://local-tts:8880/v1",
+        description="Kokoro-FastAPI TTS endpoint. Use http://local-tts:8880/v1 for self-hosted stack.",
     )
     speed: float = Field(
-        default=1.0, ge=0.25, le=4.0, description="Speech speed (0.25 to 4.0)."
+        default=1.0, ge=0.25, le=4.0, description="Speech speed (0.25 to 4.0)."  # noqa: E501
     )
     api_key: str | list[str] | None = Field(
         default=None,
@@ -1485,28 +1510,31 @@ class SpeachesSTTConfiguration(BaseSTTConfiguration):
     model_config = SPEACHES_PROVIDER_MODEL_CONFIG
     provider: Literal[ServiceProviders.SPEACHES] = ServiceProviders.SPEACHES
     model: str = Field(
-        default="Systran/faster-distil-whisper-small.en",
-        description="Whisper model identifier as served by your STT endpoint.",
+        # Use large-v3 for multilingual Hinglish support
+        default="Systran/faster-whisper-large-v3",
+        description="Whisper model identifier as served by your Speaches STT endpoint.",
         json_schema_extra={
             "examples": SPEACHES_STT_MODELS,
             "allow_custom_input": True,
         },
     )
     language: str = Field(
-        default="en",
-        description="ISO 639-1 language code.",
+        # hi = Hindi — also handles code-switched Hinglish well
+        default="hi",
+        description="ISO 639-1 language code (hi=Hindi/Hinglish, en=English).",
         json_schema_extra={
             "examples": SPEACHES_STT_LANGUAGES,
             "allow_custom_input": True,
         },
     )
     base_url: str = Field(
-        default="http://localhost:8000/v1",
-        description="OpenAI-compatible STT endpoint (Speaches, etc.).",
+        # Points to local-stt Docker service (Speaches/Whisper container)
+        default="http://local-stt:8000/v1",
+        description="OpenAI-compatible STT endpoint. Use http://local-stt:8000/v1 for self-hosted stack.",
     )
     api_key: str | list[str] | None = Field(
         default=None,
-        description="Usually not required for self-hosted STT. Leave blank unless enforced.",
+        description="Usually not required for self-hosted Speaches/Whisper. Leave blank.",
     )
 
 
